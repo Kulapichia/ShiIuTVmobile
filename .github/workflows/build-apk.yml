@@ -1,0 +1,90 @@
+name: Build Android TV APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 加上了关键的写权限
+permissions:
+  contents: write
+
+jobs:
+  build: # 您原来的 direct_build，名字可以自定义
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      # 加上了 Java (JDK) 环境，这是构建安卓的必需品
+      - name: Setup JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      # 缓存 Gradle 依赖，这是提速的关键
+      - name: Cache Gradle packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 缓存 Yarn 依赖
+      - name: Cache Yarn packages
+        uses: actions/cache@v3
+        with:
+          # 注意：Expo prebuild 后会生成新的 node_modules，所以我们缓存项目根目录的
+          path: ./node_modules 
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-
+
+      - name: Install dependencies
+        # 使用了更严谨的安装命令
+        run: yarn install --frozen-lockfile
+
+      # 加上了 Expo 项目必需的 prebuild 步骤
+      - name: Prebuild TV App
+        run: yarn prebuild
+      
+      - name: Get package version
+        id: package-version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      
+      # 这里的 run 命令可能需要根据您的 package.json 进行调整
+      # 如果您原来是 ./gradlew assembleRelease，这里就应该写那个
+      # 我假设您的 yarn build 就是执行安卓打包
+      - name: Build TV APK
+        id: build
+        run: yarn build
+
+      - name: Rename APK file
+        id: rename
+        run: |
+          mkdir -p artifacts
+          cp android/app/build/outputs/apk/release/app-release.apk artifacts/ShiIuTV.${{ steps.package-version.outputs.version }}.apk
+
+      - name: Create Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.package-version.outputs.version }}
+          # 补充了您原来 Release 的详细信息
+          name: Release v${{ steps.package-version.outputs.version }}
+          body: Automated release for version v${{ steps.package-version.outputs.version }}.
+          draft: false
+          prerelease: false
+          files: artifacts/ShiIuTV.${{ steps.package-version.outputs.version }}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
